@@ -172,7 +172,13 @@ impl Renderer {
         targeted: Option<usize>,
         theme: &Theme,
     ) {
-        let outline_stroke = Stroke { width: 1.0, ..Default::default() };
+        let solid = Stroke { width: 1.0, ..Default::default() };
+        // The picked window gets a bolder dashed border so it stands out.
+        let dashed = Stroke {
+            width: 1.5,
+            dash: StrokeDash::new(vec![8.0, 4.0], 0.0),
+            ..Default::default()
+        };
         for (i, win) in windows.iter().enumerate() {
             let is_target = targeted == Some(i);
             let Some(rect) = Rect::from_xywh(win.x + 0.5, win.y + 0.5, (win.w - 1.0).max(0.0), (win.h - 1.0).max(0.0))
@@ -198,7 +204,25 @@ impl Renderer {
             let mut pb = PathBuilder::new();
             pb.push_rect(rect);
             if let Some(path) = pb.finish() {
-                target.stroke_path(&path, &paint, &outline_stroke, Transform::identity(), None);
+                let stroke = if is_target { &dashed } else { &solid };
+                target.stroke_path(&path, &paint, stroke, Transform::identity(), None);
+            }
+
+            // Diagonal cross corner-to-corner, so the picked window is obvious.
+            if is_target {
+                let mut xc = theme.window;
+                xc.set_alpha(0.5);
+                let mut xpaint = Paint::default();
+                xpaint.set_color(xc);
+                xpaint.anti_alias = true;
+                let mut db = PathBuilder::new();
+                db.move_to(win.x, win.y);
+                db.line_to(win.x + win.w, win.y + win.h);
+                db.move_to(win.x + win.w, win.y);
+                db.line_to(win.x, win.y + win.h);
+                if let Some(path) = db.finish() {
+                    target.stroke_path(&path, &xpaint, &dashed, Transform::identity(), None);
+                }
             }
         }
 

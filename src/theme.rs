@@ -1,5 +1,5 @@
-//! Theme colors, sourced from the illogical-impulse generated palette so the
-//! selector follows the current omarchy/material theme.
+//! Theme colors, sourced from the illogical-impulse (ii) generated palette so
+//! the selector follows the current wallpaper-derived (matugen) material colors.
 //!
 //! Matches `RegionSelection.qml`:
 //!   overlayColor        = transparentize("#000000", 0.4)      -> black @ 0.6a
@@ -14,7 +14,8 @@ pub struct Theme {
     pub overlay: Color,
     /// Selection border + dimension label.
     pub border: Color,
-    /// Outline for targetable windows (and the hovered window's border/label).
+    /// Outline for targetable windows (and the hovered/picked window's
+    /// border/label). Follows the ii wallpaper palette (`secondary`).
     pub window: Color,
 }
 

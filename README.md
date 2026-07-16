@@ -1,4 +1,4 @@
-# waysnip
+# wtfsnip
 
 A snappy Wayland region-screenshot tool, styled after the
 [illogical-impulse](https://github.com/end-4/dots-hyprland) (ii) region selector
@@ -17,13 +17,19 @@ for drawing — no GTK/Qt, single self-contained binary, fast cold start.
 - **Frozen backdrop** — captures each output up front so the selection is stable.
 - **Mouse**: click-drag a rectangle; release to copy. Right-click cancels.
 - **Window targeting** (Hyprland): hover a window to highlight it (border + label),
-  then click without dragging to grab that window's bounds. Uses `hyprctl -j`;
+  then click without dragging to grab that window's bounds. Or press **Tab** to
+  pick a window from the keyboard — it highlights each window in turn (Shift+Tab
+  cycles backwards); **Enter** grabs the highlighted one. Uses `hyprctl -j`;
   gracefully disabled on other compositors.
 - **Keyboard**:
   - Arrows **move** the box (hold two for diagonal). First press spawns a
     centered box.
-  - **Shift** + arrows **resize** (moves the bottom-right corner).
-  - **Ctrl** = fine 1px steps, **Alt** = 5× faster.
+  - **Shift** + arrows **resize** (moves the bottom-right corner; hold two
+    for diagonal resize).
+  - **Ctrl** = fine 1px steps, **Alt** = 5× faster. Combine e.g.
+    **Shift** + **Alt** + Right + Down to resize diagonally in big steps.
+  - **Tab** / **Shift+Tab** cycle through targetable windows; **Enter** grabs the
+    highlighted one.
   - **Enter** confirms & copies, **Esc** cancels.
 - **Themed** — reads `~/.local/state/quickshell/user/generated/colors.json`, so
   the dim/border colors follow your current omarchy/material theme (falls back to
@@ -37,13 +43,13 @@ for drawing — no GTK/Qt, single self-contained binary, fast cold start.
 
 ```sh
 cargo build --release
-# binary at target/release/waysnip
+# binary at target/release/wtfsnip
 ```
 
 ## Usage
 
 ```sh
-waysnip
+wtfsnip
 ```
 
 The result lands on the clipboard as `image/png` (via `wl-copy`). Paste it
@@ -53,12 +59,30 @@ anywhere, or pipe it to a file:
 wl-paste --type image/png > shot.png
 ```
 
+By default it **also** saves each shot to `~/Pictures/Screenshots` as
+`wtfsnip_<timestamp>.png` (the directory is created if missing).
+
+### Configuration
+
+Optional, at `$XDG_CONFIG_HOME/wtfsnip/config.json` (i.e.
+`~/.config/wtfsnip/config.json`). Every field is optional:
+
+```json
+{
+  "save": true,
+  "save_dir": "~/Pictures/Screenshots"
+}
+```
+
+- **`save_dir`** — where auto-saved screenshots go. `~` and `$HOME` are expanded.
+- **`save`** — set to `false` to disable auto-save and keep clipboard-only.
+
 ### Bind it
 
 Hyprland, to put it on PrtSc:
 
 ```
-bindd = , PRINT, Region screenshot, exec, waysnip
+bindd = , PRINT, Region screenshot, exec, wtfsnip
 ```
 
 ## Requirements

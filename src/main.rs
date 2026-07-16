@@ -1,15 +1,17 @@
-//! waysnip — a snappy Wayland region screenshot tool.
+//! wtfsnip — a snappy Wayland region screenshot tool.
 //!
 //! Freezes each output (wlr-screencopy), shows a fullscreen layer-shell overlay
 //! styled after the illogical-impulse region selector, lets you pick a rectangle
 //! with the mouse or keyboard, then crops and copies it to the clipboard.
 
+mod config;
 mod render;
 mod selection;
 mod theme;
 mod windows;
 
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use smithay_client_toolkit::{
@@ -41,13 +43,14 @@ use wayland_protocols_wlr::screencopy::v1::client::{
     zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
 };
 
+use config::Config;
 use render::Renderer;
 use selection::Selection;
 use theme::Theme;
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("waysnip: {e}");
+        eprintln!("wtfsnip: {e}");
         std::process::exit(1);
     }
 }
@@ -84,6 +87,7 @@ fn run() -> Result<(), String> {
         render_pool,
         renderer: Renderer::new(),
         theme: Theme::load(),
+        config: Config::load(),
         keyboard: None,
         pointer: None,
         monitors: Vec::new(),
@@ -143,6 +147,8 @@ struct Monitor {
     // Window targeting (Hyprland), in this output's logical coordinates.
     window_regions: Vec<windows::WinRegion>,
     targeted: Option<usize>,
+    // Keyboard window picker (Tab) is active: draw outlines without a hover.
+    window_pick: bool,
     // Capture (physical pixels).
     capture_buffer: Option<smithay_client_toolkit::shm::slot::Buffer>,
     fmt: wl_shm::Format,
@@ -171,6 +177,7 @@ impl Monitor {
             output,
             window_regions: Vec::new(),
             targeted: None,
+            window_pick: false,
             capture_buffer: None,
             fmt: wl_shm::Format::Argb8888,
             phys_w: 0,
@@ -205,6 +212,7 @@ struct App {
     render_pool: SlotPool,
     renderer: Renderer,
     theme: Theme,
+    config: Config,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
     monitors: Vec<Monitor>,
@@ -226,7 +234,7 @@ impl App {
                 qh,
                 surface,
                 Layer::Overlay,
-                Some("waysnip"),
+                Some("wtfsnip"),
                 Some(&m.output),
             );
             layer.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
@@ -301,8 +309,8 @@ impl App {
                 return;
             };
             let region = m.selection.region();
-            let show_windows = m.pointer_in && !m.selection.active;
-            let crosshair = if show_windows {
+            let show_windows = (m.pointer_in || m.window_pick) && !m.selection.active;
+            let crosshair = if m.pointer_in && !m.selection.active {
                 Some((m.selection.mouse_x, m.selection.mouse_y))
             } else {
                 None
@@ -380,6 +388,42 @@ impl App {
         }
     }
 
+    /// Tab / Shift+Tab: keyboard window picker. Highlights the next (or previous)
+    /// targetable window on the focused output; `confirm` then grabs it. Mirrors
+    /// the mouse hover-and-click targeting, but driven from the keyboard.
+    fn cycle_window(&mut self, forward: bool) {
+        let Some(i) = self.active else { return };
+        let m = &mut self.monitors[i];
+        let n = m.window_regions.len();
+        if n == 0 {
+            return;
+        }
+        m.window_pick = true;
+        m.selection.active = false; // reveal the window outlines
+        // Cancel any in-flight arrow motion so the hidden box doesn't drift.
+        m.selection.held.left = false;
+        m.selection.held.right = false;
+        m.selection.held.up = false;
+        m.selection.held.down = false;
+        m.targeted = Some(match m.targeted {
+            None => {
+                if forward {
+                    0
+                } else {
+                    n - 1
+                }
+            }
+            Some(cur) => {
+                if forward {
+                    (cur + 1) % n
+                } else {
+                    (cur + n - 1) % n
+                }
+            }
+        });
+        m.dirty = true;
+    }
+
     /// Crop the active selection out of the frozen frame and copy it as PNG.
     fn confirm(&mut self) {
         if self.pending_exit {
@@ -389,6 +433,16 @@ impl App {
             self.request_exit();
             return;
         };
+        // Keyboard window picker: commit the highlighted window as the selection.
+        if self.monitors[i].window_pick {
+            if let Some(rect) = self.monitors[i]
+                .targeted
+                .and_then(|t| self.monitors[i].window_regions.get(t))
+                .map(|w| (w.x, w.y, w.w, w.h))
+            {
+                self.monitors[i].selection.set_rect(rect.0, rect.1, rect.2, rect.3);
+            }
+        }
         let m = &self.monitors[i];
         let region = m.selection.region();
         let (Some(bright), true) = (m.bright.as_ref(), m.selection.active && m.selection.has_area())
@@ -418,8 +472,13 @@ impl App {
         );
 
         match crop.encode_png() {
-            Ok(png) => copy_png(&png),
-            Err(e) => eprintln!("waysnip: encode: {e}"),
+            Ok(png) => {
+                copy_png(&png);
+                if self.config.save {
+                    save_png(&self.config.save_dir, &png);
+                }
+            }
+            Err(e) => eprintln!("wtfsnip: encode: {e}"),
         }
         self.request_exit();
     }
@@ -444,7 +503,21 @@ fn copy_png(png: &[u8]) {
             }
             // wl-copy daemonizes once stdin closes; don't block on it.
         }
-        Err(e) => eprintln!("waysnip: wl-copy: {e}"),
+        Err(e) => eprintln!("wtfsnip: wl-copy: {e}"),
+    }
+}
+
+/// Write the PNG into the configured directory as `wtfsnip_<timestamp>.png`,
+/// creating the directory if needed.
+fn save_png(dir: &Path, png: &[u8]) {
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("wtfsnip: create {}: {e}", dir.display());
+        return;
+    }
+    let path = config::shot_path(dir);
+    match std::fs::write(&path, png) {
+        Ok(()) => eprintln!("wtfsnip: saved {}", path.display()),
+        Err(e) => eprintln!("wtfsnip: save {}: {e}", path.display()),
     }
 }
 
@@ -498,7 +571,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, usize> for App {
                         m.copied = true;
                     }
                     Err(e) => {
-                        eprintln!("waysnip: capture buffer: {e}");
+                        eprintln!("wtfsnip: capture buffer: {e}");
                         app.exit = true;
                     }
                 }
@@ -513,7 +586,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, usize> for App {
                 app.build_bright(idx);
             }
             Event::Failed => {
-                eprintln!("waysnip: screencopy failed on output {idx}");
+                eprintln!("wtfsnip: screencopy failed on output {idx}");
                 app.exit = true;
             }
             _ => {}
@@ -619,6 +692,7 @@ impl KeyboardHandler for App {
         // Clear held arrows so motion doesn't get stuck if focus leaves mid-press.
         if let Some(i) = self.monitor_by_surface(surface) {
             self.monitors[i].selection.clear_held();
+            self.monitors[i].window_pick = false;
             self.monitors[i].dirty = true;
         }
     }
@@ -634,20 +708,24 @@ impl KeyboardHandler for App {
         match event.keysym {
             Keysym::Escape => self.cancel(),
             Keysym::Return | Keysym::KP_Enter => self.confirm(),
+            Keysym::Tab | Keysym::ISO_Left_Tab => self.cycle_window(event.keysym == Keysym::Tab),
             k => {
                 if let Some(i) = self.active {
-                    let sel = &mut self.monitors[i].selection;
+                    let m = &mut self.monitors[i];
                     match k {
-                        Keysym::Left => sel.held.left = true,
-                        Keysym::Right => sel.held.right = true,
-                        Keysym::Up => sel.held.up = true,
-                        Keysym::Down => sel.held.down = true,
+                        Keysym::Left => m.selection.held.left = true,
+                        Keysym::Right => m.selection.held.right = true,
+                        Keysym::Up => m.selection.held.up = true,
+                        Keysym::Down => m.selection.held.down = true,
                         _ => return,
                     }
+                    // Arrows leave the Tab window picker and resume box editing.
+                    m.window_pick = false;
+                    m.targeted = None;
                     // Spawn the centered box on the first arrow so a tap works too;
                     // holding then nudges it via the animation tick.
-                    sel.ensure_box();
-                    self.monitors[i].dirty = true;
+                    m.selection.ensure_box();
+                    m.dirty = true;
                 }
             }
         }

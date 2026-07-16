@@ -266,6 +266,27 @@ mod tests {
     }
 
     #[test]
+    fn shift_alt_fast_diagonal_resize() {
+        // Shift (resize) + Alt (fast) + two arrows grows the bottom-right corner
+        // on both axes by the fast step in a single tick.
+        let mut s = Selection::new(1920.0, 1080.0);
+        s.press(100.0, 100.0);
+        s.drag_to(300.0, 250.0);
+        let before = s.region();
+        s.held.resize = true; // Shift
+        s.held.fast = true; // Alt
+        s.held.right = true;
+        s.held.down = true;
+        assert!(s.tick());
+        let after = s.region();
+        assert_eq!(after.w, before.w + SPEED_FAST);
+        assert_eq!(after.h, before.h + SPEED_FAST);
+        // The anchor (top-left) stays put; only the free corner moves.
+        assert_eq!(after.x, before.x);
+        assert_eq!(after.y, before.y);
+    }
+
+    #[test]
     fn resize_keeps_min_size() {
         let mut s = Selection::new(1000.0, 1000.0);
         s.press(100.0, 100.0);

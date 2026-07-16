@@ -1,5 +1,5 @@
 [package]
-name = "waysnip"
+name = "wtfsnip"
 version = "0.1.0"
 edition = "2021"
 description = "Snappy Wayland region screenshot tool (rectangle selection), styled after the illogical-impulse region selector"
